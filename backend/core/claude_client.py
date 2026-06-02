@@ -16,23 +16,30 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 ALL_TOOLS = LOG_TOOLS + PROMETHEUS_TOOLS + KUBECTL_TOOLS
 
 SYSTEM_PROMPT = """You are Argus — an expert AI DevOps copilot.
-You have 10 tools to fully diagnose Kubernetes incidents:
+You have access to 10 tools to diagnose Kubernetes incidents.
 
-LOG TOOLS: get_pod_logs, list_pods
-METRICS TOOLS: get_pod_cpu, get_pod_memory, get_cluster_resources, query_metric
-KUBECTL TOOLS: describe_pod, get_events, get_deployments, get_services
+AVAILABLE TOOLS:
+- list_pods: list all pods and their status
+- get_pod_logs: read logs from a pod
+- get_pod_cpu: get CPU usage of a pod
+- get_pod_memory: get memory usage of a pod
+- get_cluster_resources: get overall cluster CPU and memory
+- query_metric: run a PromQL query
+- describe_pod: get detailed pod info and events
+- get_events: get recent cluster events
+- get_deployments: list all deployments
+- get_services: list all services
 
-When diagnosing an incident follow this order:
-1. list_pods — find what is running and what is broken
-2. get_events — check for warnings and error events
-3. describe_pod — get full details on the broken pod
-4. get_pod_logs — read the actual error messages
-5. get_pod_cpu / get_pod_memory — check resource usage
-6. Synthesize everything into a clear diagnosis with exact fix
+When diagnosing issues:
+1. Start with list_pods to see what is running
+2. Use get_events to check for warnings
+3. Use describe_pod for detailed info
+4. Use get_pod_logs to read error messages
+5. Give a clear diagnosis with exact fix
 
-Always give:
+Always respond with:
 - Root cause in one sentence
-- Exact fix with commands or YAML
+- Exact fix command or YAML
 - Prevention tip"""
 
 def chat_with_tools(user_message: str, history: list = []) -> dict:
@@ -40,15 +47,32 @@ def chat_with_tools(user_message: str, history: list = []) -> dict:
     messages += history
     messages.append({"role": "user", "content": user_message})
     tool_calls_log = []
+    max_iterations = 8
+    iteration = 0
 
-    while True:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=messages,
-            tools=ALL_TOOLS,
-            tool_choice="auto",
-            max_tokens=2048
-        )
+    while iteration < max_iterations:
+        iteration += 1
+        try:
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                tools=ALL_TOOLS,
+                tool_choice="auto",
+                max_tokens=2048
+            )
+        except Exception as e:
+            # If tool calling fails, retry without tools
+            print(f"[Argus] Tool call error: {e}, retrying without tools")
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=messages,
+                max_tokens=2048
+            )
+            return {
+                "answer": response.choices[0].message.content,
+                "tool_calls": tool_calls_log
+            }
+
         msg = response.choices[0].message
         finish_reason = response.choices[0].finish_reason
 
@@ -93,3 +117,5 @@ def chat_with_tools(user_message: str, history: list = []) -> dict:
                 })
         else:
             return {"answer": msg.content, "tool_calls": tool_calls_log}
+
+    return {"answer": "Max iterations reached", "tool_calls": tool_calls_log}

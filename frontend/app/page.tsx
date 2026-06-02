@@ -1,293 +1,265 @@
 'use client'
+import {useState,useRef,useEffect,useCallback} from 'react'
 
-import { useState, useRef, useEffect } from 'react'
-import { Send, Moon, Sun, ChevronRight, X, Check, MessageSquare, Plus, Cpu, HardDrive, Activity, Search, Settings, Crown, Sparkles, BarChart3, Terminal, AlertTriangle, Layers, Globe, Rocket, Zap } from 'lucide-react'
+interface ToolCall{tool:string;input:Record<string,unknown>;output:string}
+interface Message{id:string;role:'user'|'assistant';content:string;toolCalls?:ToolCall[];loading?:boolean}
+interface Chat{id:string;title:string;messages:Message[]}
 
-interface ToolCall { tool: string; input: Record<string,unknown>; output: string }
-interface Message { id: string; role:'user'|'assistant'; content:string; toolCalls?:ToolCall[]; loading?:boolean }
-interface Chat { id:string; title:string; messages:Message[] }
-
-const TOOL_META: Record<string,{icon:React.ReactNode;label:string;color:string}> = {
-  list_pods:             {icon:<Search size={12}/>,        label:'List Pods',          color:'#818CF8'},
-  get_pod_logs:          {icon:<Terminal size={12}/>,      label:'Pod Logs',           color:'#34D399'},
-  get_pod_cpu:           {icon:<Cpu size={12}/>,           label:'CPU Metrics',        color:'#FBBF24'},
-  get_pod_memory:        {icon:<HardDrive size={12}/>,     label:'Memory Metrics',     color:'#FBBF24'},
-  get_cluster_resources: {icon:<BarChart3 size={12}/>,     label:'Cluster Resources',  color:'#FBBF24'},
-  query_metric:          {icon:<Activity size={12}/>,      label:'Prometheus Query',   color:'#FDE68A'},
-  describe_pod:          {icon:<Layers size={12}/>,        label:'Describe Pod',       color:'#C084FC'},
-  get_events:            {icon:<AlertTriangle size={12}/>, label:'K8s Events',         color:'#F87171'},
-  get_deployments:       {icon:<Rocket size={12}/>,        label:'Deployments',        color:'#60A5FA'},
-  get_services:          {icon:<Globe size={12}/>,         label:'Services',           color:'#2DD4BF'},
+const TOOLS_META:Record<string,{label:string;color:string}> = {
+  list_pods:            {label:'List pods',           color:'#6366F1'},
+  get_pod_logs:         {label:'Pod logs',            color:'#10B981'},
+  get_pod_cpu:          {label:'CPU usage',           color:'#F59E0B'},
+  get_pod_memory:       {label:'Memory usage',        color:'#F59E0B'},
+  get_cluster_resources:{label:'Cluster resources',   color:'#F59E0B'},
+  query_metric:         {label:'Prometheus query',    color:'#8B5CF6'},
+  describe_pod:         {label:'Describe pod',        color:'#EC4899'},
+  get_events:           {label:'Cluster events',      color:'#EF4444'},
+  get_deployments:      {label:'Deployments',         color:'#3B82F6'},
+  get_services:         {label:'Services',            color:'#14B8A6'},
 }
 
-const SUGGESTED = [
-  {text:'Why is broken-app crashing?',     icon:'💥'},
-  {text:'Full cluster health check',        icon:'🏥'},
-  {text:'What pods are running?',           icon:'🔍'},
-  {text:'Memory usage of demo-app',         icon:'💾'},
-  {text:'Show recent cluster events',       icon:'⚠️'},
-  {text:'List all deployments',             icon:'🚀'},
+const SUGGESTED=[
+  'Why is broken-app crashing?',
+  'Full cluster health check',
+  'What pods are running?',
+  'How much memory is demo-app using?',
+  'Show me recent cluster events',
+  'List all deployments',
 ]
 
-const PLANS = [
-  {name:'Free',    price:'₹0',    period:'forever',  highlight:false, current:true,
-   features:['10 queries / day','Basic pod inspection','Log reading','Community support'],
-   cta:'Current plan'},
-  {name:'Pro',     price:'₹499',  period:'/ month',  highlight:true,  current:false,
-   features:['Unlimited queries','All 10 diagnostic tools','Prometheus metrics','Priority support','Export reports','Custom alerts'],
-   cta:'Upgrade to Pro'},
-  {name:'Team',    price:'₹1,999',period:'/ month',  highlight:false, current:false,
-   features:['Everything in Pro','Up to 10 members','Shared chat history','Admin dashboard','SLA guarantee','Dedicated support'],
-   cta:'Start free trial'},
-]
-
-function ToolCard({tc,dark}:{tc:ToolCall;dark:boolean}) {
+function ToolCallCard({tc,dark}:{tc:ToolCall;dark:boolean}){
   const [open,setOpen]=useState(false)
-  const meta=TOOL_META[tc.tool]||{icon:<Zap size={12}/>,label:tc.tool,color:'#818CF8'}
-  return (
-    <button onClick={()=>setOpen(o=>!o)} className={`w-full text-left rounded-xl border px-3 py-2.5 mb-1.5 transition-all ${dark?'bg-white/[0.04] border-white/10 hover:bg-white/[0.07]':'bg-black/[0.03] border-black/[0.08] hover:bg-black/[0.05]'}`}>
-      <div className="flex items-center gap-2.5">
-        <span className="w-5 h-5 rounded-md shrink-0 flex items-center justify-center" style={{background:`${meta.color}22`,color:meta.color}}>{meta.icon}</span>
-        <span className={`text-xs font-bold tracking-wide ${dark?'text-white/80':'text-gray-700'}`}>{meta.label}</span>
-        <span className={`text-xs font-mono truncate max-w-[180px] ${dark?'text-white/30':'text-gray-400'}`}>{JSON.stringify(tc.input).slice(0,60)}</span>
-        <span className={`ml-auto text-xs transition-transform duration-200 ${open?'rotate-90':''} ${dark?'text-white/30':'text-gray-400'}`}>›</span>
+  const meta=TOOLS_META[tc.tool]||{label:tc.tool,color:'#6366F1'}
+  return(
+    <button onClick={()=>setOpen(o=>!o)}
+      style={{display:'block',width:'100%',textAlign:'left',padding:'8px 12px',borderRadius:8,border:`1px solid ${dark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.07)'}`,background:dark?'rgba(255,255,255,0.03)':'rgba(0,0,0,0.02)',cursor:'pointer',marginBottom:6,fontFamily:'inherit'}}>
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <span style={{width:6,height:6,borderRadius:'50%',background:meta.color,flexShrink:0,display:'inline-block'}}/>
+        <span style={{fontSize:12,fontWeight:500,color:dark?'rgba(255,255,255,0.7)':'rgba(0,0,0,0.6)',fontFamily:"'Geist Mono',monospace"}}>{meta.label}</span>
+        <span style={{fontSize:11,color:dark?'rgba(255,255,255,0.25)':'rgba(0,0,0,0.3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:200,fontFamily:"'Geist Mono',monospace"}}>{JSON.stringify(tc.input).slice(0,50)}</span>
+        <span style={{marginLeft:'auto',fontSize:11,color:dark?'rgba(255,255,255,0.3)':'rgba(0,0,0,0.3)'}}>{open?'▲':'▼'}</span>
       </div>
-      {open&&<pre className={`mt-2 pt-2 border-t text-xs font-mono leading-relaxed max-h-32 overflow-auto whitespace-pre-wrap ${dark?'border-white/[0.06] text-white/50':'border-black/[0.06] text-gray-500'}`}>{tc.output.slice(0,500)}</pre>}
+      {open&&<pre style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${dark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'}`,fontSize:11,fontFamily:"'Geist Mono',monospace",color:dark?'rgba(255,255,255,0.45)':'rgba(0,0,0,0.5)',whiteSpace:'pre-wrap',maxHeight:120,overflowY:'auto',lineHeight:1.6}}>{tc.output.slice(0,400)}</pre>}
     </button>
   )
 }
 
-function Loader({dark}:{dark:boolean}) {
-  return (
-    <div className={`flex items-center gap-1.5 px-4 py-3.5 rounded-2xl rounded-tl-sm w-fit ${dark?'bg-white/[0.04] border border-white/[0.08]':'bg-black/[0.03] border border-black/[0.08]'}`}>
-      {[0,1,2].map(i=><span key={i} className="w-2 h-2 rounded-full bg-indigo-500" style={{display:'inline-block',animation:`bounce 1.2s ${i*0.2}s ease-in-out infinite`}}/>)}
-      <span className={`ml-2 text-xs font-medium ${dark?'text-white/40':'text-gray-400'}`}>Calling tools...</span>
+function Dots(){
+  return(
+    <div style={{display:'flex',alignItems:'center',gap:4,padding:'12px 16px'}}>
+      {[0,1,2].map(i=><span key={i} style={{width:6,height:6,borderRadius:'50%',background:'#6366F1',display:'inline-block',animation:`bounce 1.2s ${i*0.15}s ease-in-out infinite`}}/>)}
     </div>
   )
 }
 
-function PricingModal({dark,onClose}:{dark:boolean;onClose:()=>void}) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(0,0,0,0.75)',backdropFilter:'blur(12px)'}}>
-      <div className={`relative w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden ${dark?'bg-[#13131F] border border-white/10':'bg-white border border-gray-200'}`}>
-        <button onClick={onClose} className={`absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center z-10 ${dark?'bg-white/10 hover:bg-white/20 text-white':'bg-gray-100 hover:bg-gray-200 text-gray-700'}`}><X size={14}/></button>
-        <div className="px-8 pt-8 pb-6 text-center">
-          <div className="flex items-center justify-center gap-2 mb-3">
-            <Sparkles size={16} className="text-indigo-500"/>
-            <span className={`text-xs font-bold tracking-widest uppercase ${dark?'text-indigo-400':'text-indigo-600'}`}>Argus Plans</span>
-          </div>
-          <h2 className={`text-2xl font-bold mb-2 ${dark?'text-white':'text-gray-900'}`}>Diagnose faster. Ship with confidence.</h2>
-          <p className={`text-sm ${dark?'text-white/50':'text-gray-500'}`}>From solo engineers to platform teams — pick your plan.</p>
-        </div>
-        <div className="px-6 pb-8 grid md:grid-cols-3 gap-4">
-          {PLANS.map(p=>(
-            <div key={p.name} className={`relative rounded-2xl p-5 flex flex-col ${p.highlight?'bg-indigo-600 text-white shadow-xl shadow-indigo-600/25':dark?'bg-white/[0.04] border border-white/10':'bg-gray-50 border border-gray-200'}`}>
-              {p.highlight&&<div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-amber-400 text-amber-900 text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-wide">Most Popular</div>}
-              <p className={`text-[10px] font-bold tracking-widest uppercase mb-1 ${p.highlight?'text-indigo-200':dark?'text-white/40':'text-gray-400'}`}>{p.name}</p>
-              <div className="flex items-baseline gap-1 mb-4">
-                <span className="text-3xl font-black">{p.price}</span>
-                <span className={`text-xs ${p.highlight?'text-indigo-200':dark?'text-white/40':'text-gray-400'}`}>{p.period}</span>
-              </div>
-              <ul className="flex-1 space-y-2.5 mb-5">
-                {p.features.map(f=>(
-                  <li key={f} className="flex items-start gap-2 text-sm">
-                    <Check size={13} className={`mt-0.5 shrink-0 ${p.highlight?'text-indigo-200':'text-indigo-500'}`}/>
-                    <span className={p.highlight?'text-indigo-100':dark?'text-white/70':'text-gray-600'}>{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <button className={`w-full py-2.5 rounded-xl text-sm font-bold transition-all ${
-                p.highlight?'bg-white text-indigo-600 hover:bg-indigo-50':
-                p.current?dark?'bg-white/10 text-white/40 cursor-default':'bg-gray-200 text-gray-400 cursor-default':
-                dark?'bg-indigo-600 text-white hover:bg-indigo-500':'bg-indigo-600 text-white hover:bg-indigo-700'
-              }`}>
-                {p.current&&<Crown size={12} className="inline mr-1.5"/>}{p.cta}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-let chatCounter = 1
-
-export default function ArgusApp() {
+export default function App(){
   const [dark,setDark]=useState(true)
-  const [showPricing,setShowPricing]=useState(false)
-  const [sidebarOpen,setSidebarOpen]=useState(true)
+  const [sidebar,setSidebar]=useState(true)
   const [input,setInput]=useState('')
   const [loading,setLoading]=useState(false)
-  const [mounted,setMounted]=useState(false)
+  const [showPlans,setShowPlans]=useState(false)
   const [chats,setChats]=useState<Chat[]>([{
-    id:'1', title:'New conversation',
-    messages:[{id:'init',role:'assistant',content:'Hello! I\'m Argus, your AI DevOps copilot.\n\nI have live access to your Kubernetes cluster, Prometheus metrics, and pod logs. I can diagnose incidents, explain errors, and suggest fixes in plain English.\n\nWhat would you like to investigate?'}]
+    id:'1',title:'New conversation',
+    messages:[{id:'0',role:'assistant',content:"Hello, I'm Argus — your AI DevOps copilot.\n\nI have live access to your Kubernetes cluster, Prometheus metrics, and pod logs. Ask me anything about your infrastructure and I'll diagnose it for you."}]
   }])
-  const [activeChatId,setActiveChatId]=useState('1')
+  const [activeId,setActiveId]=useState('1')
   const bottomRef=useRef<HTMLDivElement>(null)
   const textareaRef=useRef<HTMLTextAreaElement>(null)
+  const [mounted,setMounted]=useState(false)
 
   useEffect(()=>setMounted(true),[])
-  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[chats,activeChatId])
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:'smooth'})},[chats,activeId])
 
-  const activeChat=chats.find(c=>c.id===activeChatId)!
+  const activeChat=chats.find(c=>c.id===activeId)!
   const messages=activeChat?.messages||[]
 
-  function newChat(){
-    chatCounter++
-    const id=`chat-${Date.now()}`
-    setChats(prev=>[{id,title:'New conversation',messages:[{id:'init',role:'assistant',content:'New session started. What would you like to diagnose?'}]},...prev])
-    setActiveChatId(id)
-  }
+  const newChat=useCallback(()=>{
+    const id=`c${Date.now()}`
+    setChats(p=>[{id,title:'New conversation',messages:[{id:'0',role:'assistant',content:'New session. What would you like to investigate?'}]},...p])
+    setActiveId(id)
+  },[])
 
-  async function send(text?:string){
+  const send=useCallback(async(text?:string)=>{
     const msg=text||input.trim()
     if(!msg||loading) return
     setInput('')
-    if(textareaRef.current){textareaRef.current.style.height='auto'}
+    if(textareaRef.current) textareaRef.current.style.height='auto'
     const uid=`u${Date.now()}`
     const lid=`l${Date.now()}`
-    const userMsg:Message={id:uid,role:'user',content:msg}
-    const loadMsg:Message={id:lid,role:'assistant',content:'',loading:true}
-    setChats(prev=>prev.map(c=>c.id===activeChatId
-      ?{...c,title:c.messages.length===1?msg.slice(0,38)+'...':c.title,messages:[...c.messages,userMsg,loadMsg]}:c))
+    setChats(p=>p.map(c=>c.id===activeId?{...c,title:c.messages.length===1?msg.slice(0,36):c.title,messages:[...c.messages,{id:uid,role:'user',content:msg},{id:lid,role:'assistant',content:'',loading:true}]}:c))
     setLoading(true)
-    try {
+    try{
       const history=messages.filter(m=>!m.loading).map(m=>({role:m.role,content:m.content}))
       const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg,history})})
       const data=await res.json()
-      const aiMsg:Message={id:`a${Date.now()}`,role:'assistant',content:data.answer||data.error||'No response',toolCalls:data.tool_calls||[]}
-      setChats(prev=>prev.map(c=>c.id===activeChatId?{...c,messages:[...c.messages.filter(m=>m.id!==lid),aiMsg]}:c))
-    } catch {
-      setChats(prev=>prev.map(c=>c.id===activeChatId?{...c,messages:[...c.messages.filter(m=>m.id!==lid),{id:`e${Date.now()}`,role:'assistant',content:'Connection error. Make sure the Argus backend is running on port 8000.'}]}:c))
+      const ai:Message={id:`a${Date.now()}`,role:'assistant',content:data.answer||data.error||'No response',toolCalls:data.tool_calls||[]}
+      setChats(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages.filter(m=>m.id!==lid),ai]}:c))
+    }catch{
+      setChats(p=>p.map(c=>c.id===activeId?{...c,messages:[...c.messages.filter(m=>m.id!==lid),{id:`e${Date.now()}`,role:'assistant',content:'Connection error — is the backend running on port 8000?'}]}:c))
     }
     setLoading(false)
-  }
+  },[input,loading,messages,activeId])
 
   if(!mounted) return null
 
-  const D={
-    bg:    dark?'#0C0C14':'#F5F5F7',
-    side:  dark?'#080810':'#FFFFFF',
+  const C={
+    bg:    dark?'#0F0F13':'#FAFAFA',
+    side:  dark?'#0A0A0E':'#FFFFFF',
     bdr:   dark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.08)',
-    text:  dark?'#F1F1F3':'#111827',
-    muted: dark?'rgba(255,255,255,0.4)':'#6B7280',
-    hover: dark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.04)',
-    inp:   dark?'#16161F':'#FFFFFF',
-    inpBdr:dark?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.1)',
-    msgAi: dark?'#1C1C2A':'#FFFFFF',
-    msgAiBdr:dark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.08)',
+    txt:   dark?'#EDEDED':'#111111',
+    muted: dark?'rgba(255,255,255,0.38)':'rgba(0,0,0,0.4)',
+    hover: dark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.03)',
+    inp:   dark?'#18181C':'#FFFFFF',
+    aiMsg: dark?'#18181C':'#FFFFFF',
+    aiBdr: dark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.08)',
+    active:dark?'rgba(99,102,241,0.12)':'rgba(99,102,241,0.07)',
+    actTxt:dark?'#818CF8':'#4F46E5',
   }
 
-  return (
-    <div style={{display:'flex',height:'100vh',background:D.bg,color:D.text,fontFamily:"'Plus Jakarta Sans',system-ui,sans-serif",overflow:'hidden'}}>
-      {showPricing&&<PricingModal dark={dark} onClose={()=>setShowPricing(false)}/>}
+  const font="'Geist',system-ui,sans-serif"
 
-      {/* ── Sidebar ── */}
-      <div style={{width:sidebarOpen?256:0,minWidth:0,overflow:'hidden',transition:'width 0.3s ease',display:'flex',flexDirection:'column',background:D.side,borderRight:`1px solid ${D.bdr}`,flexShrink:0}}>
-        {/* Logo */}
-        <div style={{display:'flex',alignItems:'center',gap:10,padding:'20px 16px 14px'}}>
-          <div style={{width:32,height:32,borderRadius:10,background:'linear-gradient(135deg,#4F46E5,#7C3AED)',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 4px 12px rgba(79,70,229,0.35)'}}>
-            <svg width="16" height="16" viewBox="0 0 36 36" fill="none">
-              <ellipse cx="18" cy="18" rx="14" ry="8.5" stroke="#C7D2FE" strokeWidth="1.8" fill="none"/>
-              <circle cx="18" cy="18" r="4.5" fill="#818CF8"/>
-              <circle cx="18" cy="18" r="2" fill="#0DD3A5"/>
-            </svg>
-          </div>
-          <div>
-            <div style={{fontWeight:800,fontSize:15,letterSpacing:-0.3}}>Argus</div>
-            <div style={{display:'flex',alignItems:'center',gap:4,marginTop:1}}>
-              <span style={{width:6,height:6,borderRadius:'50%',background:'#34D399',boxShadow:'0 0 6px #34D399',display:'inline-block'}}/>
-              <span style={{fontSize:10,color:D.muted,fontWeight:500}}>10 tools active</span>
+  return(
+    <div style={{display:'flex',height:'100vh',background:C.bg,color:C.txt,fontFamily:font,fontSize:14,overflow:'hidden'}}>
+
+      {/* Plans modal */}
+      {showPlans&&(
+        <div style={{position:'fixed',inset:0,zIndex:50,display:'flex',alignItems:'center',justifyContent:'center',padding:16,background:'rgba(0,0,0,0.6)'}}>
+          <div style={{width:'100%',maxWidth:640,background:C.side,borderRadius:16,border:`1px solid ${C.bdr}`,overflow:'hidden'}}>
+            <div style={{padding:'28px 28px 0',borderBottom:`1px solid ${C.bdr}`}}>
+              <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:4}}>
+                <div>
+                  <p style={{fontSize:11,fontWeight:500,letterSpacing:1,textTransform:'uppercase',color:'#6366F1',marginBottom:6}}>Argus plans</p>
+                  <h2 style={{fontSize:22,fontWeight:600,color:C.txt,marginBottom:6}}>Choose your plan</h2>
+                  <p style={{fontSize:14,color:C.muted,marginBottom:24}}>Start free, upgrade when your team needs more.</p>
+                </div>
+                <button onClick={()=>setShowPlans(false)} style={{background:'transparent',border:'none',cursor:'pointer',color:C.muted,fontSize:20,lineHeight:1,padding:4}}>×</button>
+              </div>
+            </div>
+            <div style={{padding:24,display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12}}>
+              {[
+                {name:'Free',price:'₹0',sub:'Forever',features:['10 queries / day','Pod logs + kubectl','Basic metrics'],current:true,accent:false},
+                {name:'Pro',price:'₹499',sub:'per month',features:['Unlimited queries','All 10 tools','Prometheus metrics','Priority support'],current:false,accent:true},
+                {name:'Team',price:'₹1,999',sub:'per month',features:['Everything in Pro','10 team members','Shared history','Admin controls'],current:false,accent:false},
+              ].map(p=>(
+                <div key={p.name} className="plan-card" style={{borderRadius:12,border:`1px solid ${p.accent?'#6366F1':C.bdr}`,padding:20,display:'flex',flexDirection:'column',background:p.accent?dark?'rgba(99,102,241,0.08)':'rgba(99,102,241,0.04)':'transparent'}}>
+                  <p style={{fontSize:11,fontWeight:600,letterSpacing:1,textTransform:'uppercase',color:p.accent?'#6366F1':C.muted,marginBottom:8}}>{p.name}</p>
+                  <div style={{marginBottom:16}}>
+                    <span style={{fontSize:26,fontWeight:600,color:C.txt}}>{p.price}</span>
+                    <span style={{fontSize:12,color:C.muted,marginLeft:4}}>{p.sub}</span>
+                  </div>
+                  <ul style={{flex:1,marginBottom:16,listStyle:'none'}}>
+                    {p.features.map(f=>(
+                      <li key={f} style={{fontSize:13,color:C.muted,marginBottom:6,display:'flex',alignItems:'flex-start',gap:6}}>
+                        <span style={{color:'#10B981',flexShrink:0,marginTop:1}}>✓</span>{f}
+                      </li>
+                    ))}
+                  </ul>
+                  <button style={{width:'100%',padding:'9px 0',borderRadius:8,border:`1px solid ${p.accent?'#6366F1':C.bdr}`,background:p.accent?'#6366F1':'transparent',color:p.accent?'#fff':p.current?C.muted:C.txt,fontSize:13,fontWeight:500,cursor:p.current?'default':'pointer',fontFamily:font}}>
+                    {p.current?'Current plan':p.name==='Team'?'Contact sales':'Upgrade'}
+                  </button>
+                </div>
+              ))}
             </div>
           </div>
         </div>
+      )}
 
-        {/* New chat btn */}
-        <div style={{padding:'0 12px 8px'}}>
-          <button onClick={newChat} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'10px 14px',borderRadius:12,background:'#4F46E5',color:'white',border:'none',cursor:'pointer',fontSize:13,fontWeight:600,fontFamily:'inherit',boxShadow:'0 4px 12px rgba(79,70,229,0.3)'}}>
-            <Plus size={14}/> New conversation
+      {/* Sidebar */}
+      <div style={{width:sidebar?240:0,flexShrink:0,overflow:'hidden',transition:'width 0.25s ease',display:'flex',flexDirection:'column',background:C.side,borderRight:`1px solid ${C.bdr}`}}>
+        {/* Logo */}
+        <div style={{padding:'18px 16px 14px',display:'flex',alignItems:'center',gap:10}}>
+          <div style={{width:30,height:30,borderRadius:8,background:'#6366F1',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}}>
+            <svg width="15" height="15" viewBox="0 0 36 36" fill="none">
+              <ellipse cx="18" cy="18" rx="14" ry="8" stroke="#C7D2FE" strokeWidth="2" fill="none"/>
+              <circle cx="18" cy="18" r="4" fill="#A5B4FC"/>
+              <circle cx="18" cy="18" r="1.8" fill="#0DD3A5"/>
+            </svg>
+          </div>
+          <span style={{fontWeight:600,fontSize:15,letterSpacing:-0.3,whiteSpace:'nowrap'}}>Argus</span>
+          <div style={{display:'flex',alignItems:'center',gap:4,marginLeft:'auto'}}>
+            <span style={{width:5,height:5,borderRadius:'50%',background:'#10B981',display:'inline-block'}}/>
+            <span style={{fontSize:11,color:C.muted}}>live</span>
+          </div>
+        </div>
+
+        {/* New chat */}
+        <div style={{padding:'0 10px 8px'}}>
+          <button onClick={newChat} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderRadius:8,border:`1px solid ${C.bdr}`,background:'transparent',color:C.txt,fontSize:13,fontWeight:500,cursor:'pointer',fontFamily:font}}>
+            <span style={{fontSize:16,lineHeight:1}}>+</span> New conversation
           </button>
         </div>
 
         {/* Chat list */}
-        <div style={{flex:1,overflowY:'auto',padding:'0 8px'}}>
-          <div style={{fontSize:10,fontWeight:700,letterSpacing:2,textTransform:'uppercase',color:D.muted,padding:'8px 8px 6px'}}>Recent</div>
+        <div style={{flex:1,overflowY:'auto',padding:'4px 8px'}}>
+          <p style={{fontSize:10,fontWeight:500,letterSpacing:1.2,textTransform:'uppercase',color:C.muted,padding:'8px 8px 5px'}}>Recents</p>
           {chats.map(c=>(
-            <button key={c.id} onClick={()=>setActiveChatId(c.id)} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12.5,fontWeight:500,fontFamily:'inherit',textAlign:'left',marginBottom:1,background:c.id===activeChatId?dark?'rgba(79,70,229,0.15)':'rgba(79,70,229,0.08)':'transparent',color:c.id===activeChatId?dark?'#A5B4FC':'#4F46E5':D.muted}}>
-              <MessageSquare size={12} style={{flexShrink:0}}/>
-              <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{c.title}</span>
+            <button key={c.id} onClick={()=>setActiveId(c.id)} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'8px 10px',borderRadius:8,border:'none',background:c.id===activeId?C.active:'transparent',color:c.id===activeId?C.actTxt:C.muted,fontSize:13,fontWeight:c.id===activeId?500:400,cursor:'pointer',fontFamily:font,textAlign:'left',marginBottom:1,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+              <span style={{fontSize:12,flexShrink:0}}>💬</span>
+              <span style={{overflow:'hidden',textOverflow:'ellipsis'}}>{c.title}</span>
             </button>
           ))}
         </div>
 
         {/* Bottom */}
-        <div style={{padding:'12px',borderTop:`1px solid ${D.bdr}`}}>
-          <button onClick={()=>setShowPricing(true)} style={{width:'100%',padding:'12px',borderRadius:12,border:`1px solid ${dark?'rgba(79,70,229,0.25)':'rgba(79,70,229,0.2)'}`,background:dark?'rgba(79,70,229,0.08)':'rgba(79,70,229,0.04)',cursor:'pointer',textAlign:'left',marginBottom:6,fontFamily:'inherit'}}>
-            <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:3}}>
-              <Crown size={12} style={{color:'#FBBF24'}}/>
-              <span style={{fontSize:12,fontWeight:700,color:dark?'#A5B4FC':'#4F46E5'}}>Upgrade to Pro</span>
-            </div>
-            <div style={{fontSize:11,color:D.muted}}>Unlimited queries + all tools</div>
+        <div style={{padding:'10px 10px 16px',borderTop:`1px solid ${C.bdr}`}}>
+          <button onClick={()=>setShowPlans(true)} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:8,border:`1px solid ${C.bdr}`,background:'transparent',color:C.txt,fontSize:13,fontWeight:500,cursor:'pointer',fontFamily:font,marginBottom:4}}>
+            <span>⭐</span> Upgrade to Pro
           </button>
-          <button onClick={()=>setDark(d=>!d)} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12.5,fontFamily:'inherit',background:'transparent',color:D.muted}}>
-            {dark?<Sun size={13}/>:<Moon size={13}/>}{dark?'Light mode':'Dark mode'}
+          <button onClick={()=>setDark(d=>!d)} style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:8,border:'none',background:'transparent',color:C.muted,fontSize:13,cursor:'pointer',fontFamily:font,marginBottom:2}}>
+            <span>{dark?'☀️':'🌙'}</span> {dark?'Light mode':'Dark mode'}
           </button>
-          <button style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12.5,fontFamily:'inherit',background:'transparent',color:D.muted}}>
-            <Settings size={13}/>Settings
+          <button style={{width:'100%',display:'flex',alignItems:'center',gap:8,padding:'9px 12px',borderRadius:8,border:'none',background:'transparent',color:C.muted,fontSize:13,cursor:'pointer',fontFamily:font}}>
+            <span>⚙️</span> Settings
           </button>
         </div>
       </div>
 
-      {/* ── Main ── */}
-      <div style={{flex:1,display:'flex',flexDirection:'column',minWidth:0,background:D.bg}}>
-        {/* Topbar */}
-        <div style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',borderBottom:`1px solid ${D.bdr}`,flexShrink:0}}>
-          <button onClick={()=>setSidebarOpen(o=>!o)} style={{width:32,height:32,borderRadius:8,border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',background:'transparent',color:D.muted}}>
-            <ChevronRight size={16} style={{transform:sidebarOpen?'rotate(180deg)':'none',transition:'transform 0.3s'}}/>
+      {/* Main */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',minWidth:0}}>
+        {/* Header */}
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 18px',borderBottom:`1px solid ${C.bdr}`,flexShrink:0}}>
+          <button onClick={()=>setSidebar(s=>!s)} style={{width:32,height:32,borderRadius:7,border:`1px solid ${C.bdr}`,background:'transparent',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',color:C.muted,fontSize:16,flexShrink:0}}>
+            {sidebar?'←':'→'}
           </button>
-          <span style={{fontSize:13.5,fontWeight:500,color:D.muted,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{activeChat?.title}</span>
-          <button onClick={()=>setShowPricing(true)} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 14px',borderRadius:20,background:'linear-gradient(135deg,#4F46E5,#7C3AED)',color:'white',border:'none',cursor:'pointer',fontSize:12,fontWeight:700,fontFamily:'inherit',boxShadow:'0 4px 12px rgba(79,70,229,0.25)'}}>
-            <Crown size={11}/> Upgrade
+          <span style={{fontSize:13,fontWeight:500,color:C.muted,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{activeChat?.title}</span>
+          <button onClick={()=>setShowPlans(true)} style={{display:'flex',alignItems:'center',gap:6,padding:'6px 14px',borderRadius:20,border:'1px solid #6366F1',background:'transparent',color:'#6366F1',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:font,flexShrink:0}}>
+            ⭐ Upgrade
           </button>
         </div>
 
         {/* Messages */}
-        <div style={{flex:1,overflowY:'auto',padding:'0 16px'}}>
-          <div style={{maxWidth:720,margin:'0 auto',paddingTop:32,paddingBottom:8}}>
+        <div style={{flex:1,overflowY:'auto'}}>
+          <div style={{maxWidth:700,margin:'0 auto',padding:'32px 20px 16px'}}>
             {messages.map(msg=>(
-              <div key={msg.id} style={{display:'flex',justifyContent:msg.role==='user'?'flex-end':'flex-start',marginBottom:24}}>
+              <div key={msg.id} style={{display:'flex',justifyContent:msg.role==='user'?'flex-end':'flex-start',marginBottom:28}}>
                 {msg.role==='assistant'&&(
-                  <div style={{width:32,height:32,borderRadius:10,background:'linear-gradient(135deg,#4F46E5,#7C3AED)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginRight:10,marginTop:2,boxShadow:'0 4px 10px rgba(79,70,229,0.3)'}}>
-                    <svg width="14" height="14" viewBox="0 0 36 36" fill="none">
-                      <ellipse cx="18" cy="18" rx="14" ry="8.5" stroke="#C7D2FE" strokeWidth="2" fill="none"/>
-                      <circle cx="18" cy="18" r="4.5" fill="#818CF8"/>
-                      <circle cx="18" cy="18" r="2" fill="#0DD3A5"/>
+                  <div style={{width:28,height:28,borderRadius:7,background:'#6366F1',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,marginRight:10,marginTop:2}}>
+                    <svg width="13" height="13" viewBox="0 0 36 36" fill="none">
+                      <ellipse cx="18" cy="18" rx="14" ry="8" stroke="#C7D2FE" strokeWidth="2" fill="none"/>
+                      <circle cx="18" cy="18" r="4" fill="#A5B4FC"/>
+                      <circle cx="18" cy="18" r="1.8" fill="#0DD3A5"/>
                     </svg>
                   </div>
                 )}
-                <div style={{maxWidth:'80%',display:'flex',flexDirection:'column',alignItems:msg.role==='user'?'flex-end':'flex-start'}}>
-                  <div style={{fontSize:11.5,fontWeight:600,color:msg.role==='user'?D.muted:'#818CF8',marginBottom:5}}>
+                <div style={{maxWidth:'82%',display:'flex',flexDirection:'column',alignItems:msg.role==='user'?'flex-end':'flex-start'}}>
+                  <span style={{fontSize:11,fontWeight:500,color:msg.role==='user'?C.muted:'#818CF8',marginBottom:5}}>
                     {msg.role==='user'?'You':'Argus'}
-                  </div>
+                  </span>
                   {msg.toolCalls&&msg.toolCalls.length>0&&(
                     <div style={{width:'100%',marginBottom:8}}>
-                      {msg.toolCalls.map((tc,j)=><ToolCard key={j} tc={tc} dark={dark}/>)}
+                      {msg.toolCalls.map((tc,j)=><ToolCallCard key={j} tc={tc} dark={dark}/>)}
                     </div>
                   )}
-                  {msg.loading?<Loader dark={dark}/>:msg.content&&(
+                  {msg.loading?<Dots/>:msg.content&&(
                     <div style={{
-                      borderRadius:msg.role==='user'?'18px 4px 18px 18px':'4px 18px 18px 18px',
                       padding:'12px 16px',
-                      fontSize:14,
-                      lineHeight:1.65,
-                      background:msg.role==='user'?'linear-gradient(135deg,#4F46E5,#6366F1)':D.msgAi,
-                      color:msg.role==='user'?'white':D.text,
-                      border:msg.role==='user'?'none':`1px solid ${D.msgAiBdr}`,
-                      boxShadow:msg.role==='user'?'0 4px 14px rgba(79,70,229,0.25)':dark?'none':'0 1px 4px rgba(0,0,0,0.06)'
+                      borderRadius:msg.role==='user'?'16px 4px 16px 16px':'4px 16px 16px 16px',
+                      background:msg.role==='user'?'#6366F1':C.aiMsg,
+                      color:msg.role==='user'?'#FFFFFF':C.txt,
+                      border:msg.role==='user'?'none':`1px solid ${C.aiBdr}`,
+                      fontSize:14,lineHeight:1.65,
                     }}>
-                      <pre style={{whiteSpace:'pre-wrap',fontFamily:'inherit',fontSize:14,lineHeight:1.65,margin:0}}>{msg.content}</pre>
+                      <pre style={{whiteSpace:'pre-wrap',fontFamily:font,fontSize:14,lineHeight:1.65,margin:0}}>{msg.content}</pre>
                     </div>
                   )}
                 </div>
@@ -299,12 +271,12 @@ export default function ArgusApp() {
 
         {/* Suggested */}
         {messages.length<=1&&(
-          <div style={{maxWidth:720,margin:'0 auto',width:'100%',padding:'0 16px 12px'}}>
-            <div style={{fontSize:11,fontWeight:600,color:D.muted,marginBottom:8,letterSpacing:0.5}}>SUGGESTED</div>
-            <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+          <div style={{maxWidth:700,margin:'0 auto',width:'100%',padding:'0 20px 10px'}}>
+            <p style={{fontSize:11,fontWeight:500,letterSpacing:0.8,textTransform:'uppercase',color:C.muted,marginBottom:8}}>Suggested</p>
+            <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
               {SUGGESTED.map((s,i)=>(
-                <button key={i} onClick={()=>send(s.text)} style={{display:'flex',alignItems:'center',gap:6,fontSize:12.5,padding:'7px 14px',borderRadius:20,border:`1px solid ${D.bdr}`,background:'transparent',color:D.muted,cursor:'pointer',fontFamily:'inherit',transition:'all 0.15s'}}>
-                  <span>{s.icon}</span><span>{s.text}</span>
+                <button key={i} onClick={()=>send(s)} style={{fontSize:12.5,padding:'7px 13px',borderRadius:20,border:`1px solid ${C.bdr}`,background:'transparent',color:C.muted,cursor:'pointer',fontFamily:font,transition:'color 0.15s'}}>
+                  {s}
                 </button>
               ))}
             </div>
@@ -312,24 +284,24 @@ export default function ArgusApp() {
         )}
 
         {/* Input */}
-        <div style={{maxWidth:720,margin:'0 auto',width:'100%',padding:'0 16px 24px'}}>
-          <div style={{display:'flex',alignItems:'flex-end',gap:10,padding:'12px 16px',borderRadius:16,background:D.inp,border:`1.5px solid ${D.inpBdr}`,transition:'border-color 0.2s',boxShadow:dark?'0 4px 20px rgba(0,0,0,0.3)':'0 4px 20px rgba(0,0,0,0.06)'}}>
-            <textarea ref={textareaRef} value={input}
+        <div style={{maxWidth:700,margin:'0 auto',width:'100%',padding:'8px 20px 24px'}}>
+          <div style={{display:'flex',alignItems:'flex-end',gap:10,padding:'12px 14px',borderRadius:12,border:`1px solid ${C.bdr}`,background:C.inp,transition:'border-color 0.15s'}}>
+            <textarea ref={textareaRef} value={input} rows={1} disabled={loading}
+              placeholder="Ask Argus about your Kubernetes cluster..."
               onChange={e=>{setInput(e.target.value);e.target.style.height='auto';e.target.style.height=Math.min(e.target.scrollHeight,160)+'px'}}
               onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&(e.preventDefault(),send())}
-              onFocus={e=>(e.target.parentElement!.style.borderColor='rgba(99,102,241,0.6)')}
-              onBlur={e=>(e.target.parentElement!.style.borderColor=D.inpBdr)}
-              placeholder="Ask Argus about your Kubernetes cluster..."
-              rows={1} disabled={loading}
-              style={{flex:1,background:'transparent',border:'none',outline:'none',fontSize:14,lineHeight:1.5,color:D.text,resize:'none',maxHeight:160,fontFamily:'inherit'}}
+              onFocus={e=>{const p=e.target.parentElement;if(p)p.style.borderColor=dark?'rgba(99,102,241,0.5)':'rgba(99,102,241,0.4)'}}
+              onBlur={e=>{const p=e.target.parentElement;if(p)p.style.borderColor=C.bdr}}
+              style={{flex:1,background:'transparent',border:'none',outline:'none',fontSize:14,lineHeight:1.55,color:C.txt,resize:'none',maxHeight:160,fontFamily:font}}
             />
-            <button onClick={()=>send()} disabled={loading||!input.trim()} style={{width:36,height:36,borderRadius:10,border:'none',cursor:input.trim()&&!loading?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,background:input.trim()&&!loading?'linear-gradient(135deg,#4F46E5,#6366F1)':dark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.07)',color:input.trim()&&!loading?'white':D.muted,boxShadow:input.trim()&&!loading?'0 4px 12px rgba(79,70,229,0.3)':'none',transition:'all 0.2s'}}>
-              <Send size={15}/>
+            <button onClick={()=>send()} disabled={loading||!input.trim()}
+              style={{width:34,height:34,borderRadius:8,border:'none',background:input.trim()&&!loading?'#6366F1':dark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.07)',color:input.trim()&&!loading?'#fff':C.muted,cursor:input.trim()&&!loading?'pointer':'default',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,transition:'all 0.15s',fontFamily:font}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
           </div>
-          <div style={{textAlign:'center',fontSize:11,color:D.muted,marginTop:8}}>
-            Press <kbd style={{padding:'1px 6px',borderRadius:4,background:dark?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.07)',fontSize:10,fontFamily:'monospace'}}>Enter</kbd> to send · <kbd style={{padding:'1px 6px',borderRadius:4,background:dark?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.07)',fontSize:10,fontFamily:'monospace'}}>Shift+Enter</kbd> for newline
-          </div>
+          <p style={{textAlign:'center',fontSize:11,color:C.muted,marginTop:7}}>
+            Press Enter to send · Shift+Enter for new line
+          </p>
         </div>
       </div>
     </div>
